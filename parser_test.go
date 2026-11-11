@@ -6830,6 +6830,260 @@ func TestParser_InvalidBinaryOp(t *testing.T) {
 	AssertParseStatementError(t, `SELECT * FROM tbl WHERE x = 'y' ESCAPE '@'`, `1:33: expected semicolon or EOF, found 'ESCAPE'`)
 }
 
+// TestParser_ReturningClause covers the SQLite 3.35 RETURNING clause on
+// INSERT, UPDATE and DELETE: a bare "*" or a comma-separated list of
+// expressions, each with an optional AS alias.
+func TestParser_ReturningClause(t *testing.T) {
+	t.Run("star", func(t *testing.T) {
+		AssertParseStatement(t, `DELETE FROM tbl RETURNING *`, &sql.DeleteStatement{
+			Delete: pos(0),
+			From:   pos(7),
+			Table:  &sql.QualifiedTableName{Name: &sql.Ident{NamePos: pos(12), Name: "tbl"}},
+			ReturningClause: &sql.ReturningClause{
+				Returning: pos(16),
+				Columns:   []*sql.ResultColumn{{Star: pos(26)}},
+			},
+		})
+		AssertParseStatement(t, `UPDATE tbl SET x = 1 RETURNING *`, &sql.UpdateStatement{
+			Update: pos(0),
+			Table:  &sql.QualifiedTableName{Name: &sql.Ident{NamePos: pos(7), Name: "tbl"}},
+			Set:    pos(11),
+			Assignments: []*sql.Assignment{{
+				Columns: []*sql.Ident{{NamePos: pos(15), Name: "x"}},
+				Eq:      pos(17),
+				Expr:    &sql.NumberLit{ValuePos: pos(19), Value: "1"},
+			}},
+			ReturningClause: &sql.ReturningClause{
+				Returning: pos(21),
+				Columns:   []*sql.ResultColumn{{Star: pos(31)}},
+			},
+		})
+		AssertParseStatement(t, `INSERT INTO tbl(x) VALUES (3) RETURNING *`, &sql.InsertStatement{
+			Insert:        pos(0),
+			Into:          pos(7),
+			Table:         &sql.Ident{NamePos: pos(12), Name: "tbl"},
+			ColumnsLparen: pos(15),
+			Columns:       []*sql.Ident{{NamePos: pos(16), Name: "x"}},
+			ColumnsRparen: pos(17),
+			Values:        pos(19),
+			ValueLists: []*sql.ExprList{{
+				Lparen: pos(26),
+				Exprs:  []sql.Expr{&sql.NumberLit{ValuePos: pos(27), Value: "3"}},
+				Rparen: pos(28),
+			}},
+			ReturningClause: &sql.ReturningClause{
+				Returning: pos(30),
+				Columns:   []*sql.ResultColumn{{Star: pos(40)}},
+			},
+		})
+	})
+
+	t.Run("multi-expression-and-alias", func(t *testing.T) {
+		AssertParseStatement(t, `INSERT INTO tbl(x) VALUES (3) RETURNING id, x, x+1`, &sql.InsertStatement{
+			Insert:        pos(0),
+			Into:          pos(7),
+			Table:         &sql.Ident{NamePos: pos(12), Name: "tbl"},
+			ColumnsLparen: pos(15),
+			Columns:       []*sql.Ident{{NamePos: pos(16), Name: "x"}},
+			ColumnsRparen: pos(17),
+			Values:        pos(19),
+			ValueLists: []*sql.ExprList{{
+				Lparen: pos(26),
+				Exprs:  []sql.Expr{&sql.NumberLit{ValuePos: pos(27), Value: "3"}},
+				Rparen: pos(28),
+			}},
+			ReturningClause: &sql.ReturningClause{
+				Returning: pos(30),
+				Columns: []*sql.ResultColumn{
+					{Expr: &sql.Ident{NamePos: pos(40), Name: "id"}},
+					{Expr: &sql.Ident{NamePos: pos(44), Name: "x"}},
+					{Expr: &sql.BinaryExpr{
+						X:     &sql.Ident{NamePos: pos(47), Name: "x"},
+						OpPos: pos(48), Op: sql.PLUS,
+						Y: &sql.NumberLit{ValuePos: pos(49), Value: "1"},
+					}},
+				},
+			},
+		})
+		AssertParseStatement(t, `INSERT INTO tbl(x) VALUES (3) RETURNING id AS pk`, &sql.InsertStatement{
+			Insert:        pos(0),
+			Into:          pos(7),
+			Table:         &sql.Ident{NamePos: pos(12), Name: "tbl"},
+			ColumnsLparen: pos(15),
+			Columns:       []*sql.Ident{{NamePos: pos(16), Name: "x"}},
+			ColumnsRparen: pos(17),
+			Values:        pos(19),
+			ValueLists: []*sql.ExprList{{
+				Lparen: pos(26),
+				Exprs:  []sql.Expr{&sql.NumberLit{ValuePos: pos(27), Value: "3"}},
+				Rparen: pos(28),
+			}},
+			ReturningClause: &sql.ReturningClause{
+				Returning: pos(30),
+				Columns: []*sql.ResultColumn{{
+					Expr:  &sql.Ident{NamePos: pos(40), Name: "id"},
+					As:    pos(43),
+					Alias: &sql.Ident{NamePos: pos(46), Name: "pk"},
+				}},
+			},
+		})
+		AssertParseStatement(t, `UPDATE tbl SET x = 1 RETURNING id AS pk, x + 1 AS y`, &sql.UpdateStatement{
+			Update: pos(0),
+			Table:  &sql.QualifiedTableName{Name: &sql.Ident{NamePos: pos(7), Name: "tbl"}},
+			Set:    pos(11),
+			Assignments: []*sql.Assignment{{
+				Columns: []*sql.Ident{{NamePos: pos(15), Name: "x"}},
+				Eq:      pos(17),
+				Expr:    &sql.NumberLit{ValuePos: pos(19), Value: "1"},
+			}},
+			ReturningClause: &sql.ReturningClause{
+				Returning: pos(21),
+				Columns: []*sql.ResultColumn{
+					{
+						Expr:  &sql.Ident{NamePos: pos(31), Name: "id"},
+						As:    pos(34),
+						Alias: &sql.Ident{NamePos: pos(37), Name: "pk"},
+					},
+					{
+						Expr: &sql.BinaryExpr{
+							X:     &sql.Ident{NamePos: pos(41), Name: "x"},
+							OpPos: pos(43), Op: sql.PLUS,
+							Y: &sql.NumberLit{ValuePos: pos(45), Value: "1"},
+						},
+						As:    pos(47),
+						Alias: &sql.Ident{NamePos: pos(50), Name: "y"},
+					},
+				},
+			},
+		})
+	})
+
+	// RETURNING follows ORDER BY/LIMIT on DELETE (and UPDATE), which the
+	// parser supports as a superset of SQLite's syntax. The LIMIT expression
+	// must stop before the RETURNING keyword rather than swallowing it.
+	t.Run("after-order-by-limit", func(t *testing.T) {
+		AssertParseStatement(t, `DELETE FROM tbl LIMIT 5 RETURNING id`, &sql.DeleteStatement{
+			Delete:    pos(0),
+			From:      pos(7),
+			Table:     &sql.QualifiedTableName{Name: &sql.Ident{NamePos: pos(12), Name: "tbl"}},
+			Limit:     pos(16),
+			LimitExpr: &sql.NumberLit{ValuePos: pos(22), Value: "5"},
+			ReturningClause: &sql.ReturningClause{
+				Returning: pos(24),
+				Columns:   []*sql.ResultColumn{{Expr: &sql.Ident{NamePos: pos(34), Name: "id"}}},
+			},
+		})
+		AssertParseStatement(t, `DELETE FROM tbl ORDER BY x LIMIT 2 RETURNING id`, &sql.DeleteStatement{
+			Delete:  pos(0),
+			From:    pos(7),
+			Table:   &sql.QualifiedTableName{Name: &sql.Ident{NamePos: pos(12), Name: "tbl"}},
+			Order:   pos(16),
+			OrderBy: pos(22),
+			OrderingTerms: []*sql.OrderingTerm{
+				{X: &sql.Ident{NamePos: pos(25), Name: "x"}},
+			},
+			Limit:     pos(27),
+			LimitExpr: &sql.NumberLit{ValuePos: pos(33), Value: "2"},
+			ReturningClause: &sql.ReturningClause{
+				Returning: pos(35),
+				Columns:   []*sql.ResultColumn{{Expr: &sql.Ident{NamePos: pos(45), Name: "id"}}},
+			},
+		})
+	})
+
+	// RETURNING follows the upsert clause. The DO UPDATE SET assignment list
+	// must not consume the RETURNING keyword.
+	t.Run("after-upsert", func(t *testing.T) {
+		AssertParseStatement(t, `INSERT INTO tbl(x) VALUES (1) ON CONFLICT DO UPDATE SET x=1 RETURNING id`, &sql.InsertStatement{
+			Insert:        pos(0),
+			Into:          pos(7),
+			Table:         &sql.Ident{NamePos: pos(12), Name: "tbl"},
+			ColumnsLparen: pos(15),
+			Columns:       []*sql.Ident{{NamePos: pos(16), Name: "x"}},
+			ColumnsRparen: pos(17),
+			Values:        pos(19),
+			ValueLists: []*sql.ExprList{{
+				Lparen: pos(26),
+				Exprs:  []sql.Expr{&sql.NumberLit{ValuePos: pos(27), Value: "1"}},
+				Rparen: pos(28),
+			}},
+			UpsertClauses: []*sql.UpsertClause{{
+				On:          pos(30),
+				OnConflict:  pos(33),
+				Do:          pos(42),
+				DoUpdate:    pos(45),
+				DoUpdateSet: pos(52),
+				Assignments: []*sql.Assignment{{
+					Columns: []*sql.Ident{{NamePos: pos(56), Name: "x"}},
+					Eq:      pos(57),
+					Expr:    &sql.NumberLit{ValuePos: pos(58), Value: "1"},
+				}},
+			}},
+			ReturningClause: &sql.ReturningClause{
+				Returning: pos(60),
+				Columns:   []*sql.ResultColumn{{Expr: &sql.Ident{NamePos: pos(70), Name: "id"}}},
+			},
+		})
+	})
+}
+
+// TestParser_ReturningAsIdentifier covers RETURNING declared as a non-reserved
+// (fallback) keyword. It remains usable as a bare identifier in expression and
+// assignment positions, while keeping its clause meaning wherever the clause
+// grammar is valid. This deliberately extends SQLite, where RETURNING is fully
+// reserved; the parser accepts these so existing SQL using the word as a name
+// keeps parsing, and every accepted form round-trips through String().
+func TestParser_ReturningAsIdentifier(t *testing.T) {
+	// The keyword works as an identifier wherever an expression is allowed,
+	// including inside a RETURNING list and as an explicit AS alias.
+	accept := []string{
+		`SELECT returning FROM tbl`,
+		`SELECT * FROM tbl WHERE returning > 0`,
+		`UPDATE tbl SET returning = 1`,
+		`UPDATE tbl SET x = 1 RETURNING returning`,
+		`INSERT INTO tbl(x) VALUES (3) RETURNING returning`,
+		`INSERT INTO tbl(x) VALUES (3) RETURNING id AS returning`,
+		`SELECT 1 AS returning`,
+		`SELECT * FROM tbl AS returning`,
+		// LIMIT/OFFSET and ORDER BY take an expression: the keyword is the
+		// operand, not the start of a RETURNING clause.
+		`DELETE FROM tbl LIMIT returning`,
+		`DELETE FROM tbl LIMIT 5 OFFSET returning`,
+		`DELETE FROM tbl ORDER BY returning LIMIT 5 RETURNING id`,
+		`DELETE FROM tbl LIMIT returning RETURNING id`,
+		// Qualified column references and function names.
+		`SELECT tbl.returning FROM tbl`,
+		`SELECT returning()`,
+	}
+	for _, s := range accept {
+		stmt, err := sql.NewParser(strings.NewReader(s)).ParseStatement()
+		if err != nil {
+			t.Errorf("%q: unexpected parse error: %v", s, err)
+			continue
+		}
+		out := stmt.String()
+		if _, err := sql.NewParser(strings.NewReader(out)).ParseStatement(); err != nil {
+			t.Errorf("%q: cannot re-parse %q: %v", s, out, err)
+		}
+	}
+
+	// At the start of a table reference, or in implicit-alias position, the
+	// keyword keeps its clause meaning and must not be swallowed as a name.
+	reject := []string{
+		`DELETE FROM returning WHERE id = 1`,
+		`SELECT * FROM tbl returning`,
+		`INSERT INTO tbl returning (x) VALUES (1)`,
+	}
+	for _, s := range reject {
+		if _, err := sql.NewParser(strings.NewReader(s)).ParseStatement(); err == nil {
+			t.Errorf("%q: expected parse error, got nil", s)
+		}
+	}
+
+	// A RETURNING clause still requires at least one result column.
+	AssertParseStatementError(t, `INSERT INTO tbl (x) VALUES (1) RETURNING`, `1:40: expected expression, found 'EOF'`)
+}
+
 func TestError_Error(t *testing.T) {
 	err := &sql.Error{Msg: "test"}
 	if got, want := err.Error(), `test`; got != want {

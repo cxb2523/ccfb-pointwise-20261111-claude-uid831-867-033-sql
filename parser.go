@@ -1596,9 +1596,19 @@ func (p *Parser) parseDropTriggerStatement(dropPos Pos) (_ *DropTriggerStatement
 }
 
 // isAliasToken returns true if tok can begin an alias: an identifier or a
-// string literal, which SQLite accepts as an alias too.
+// string literal, which SQLite accepts as an alias too. Fallback keywords are
+// deliberately excluded in implicit alias position: they must retain their
+// clause or join meaning (e.g. "FROM t RIGHT JOIN"), matching SQLite where a
+// keyword cannot introduce an implicit alias.
 func isAliasToken(tok Token) bool {
 	return isIdentToken(tok) || tok == STRING
+}
+
+// isExplicitAliasToken returns true if tok can follow an explicit AS as an
+// alias. It is a superset of isAliasToken: after AS, SQLite also accepts
+// fallback keywords such as RETURNING ("RETURNING id AS returning").
+func isExplicitAliasToken(tok Token) bool {
+	return isAliasToken(tok) || isBareToken(tok)
 }
 
 // parseAlias parses an alias name, which may be a string literal.
@@ -2393,11 +2403,12 @@ func (p *Parser) parseResultColumn() (_ *ResultColumn, err error) {
 		return &col, nil
 	}
 
-	// If "AS" is next, the alias must follow.
-	// Otherwise it can optionally be an identifier or string alias.
+	// If "AS" is next, the alias must follow. After an explicit AS SQLite also
+	// allows a fallback keyword as the alias name. Otherwise it can optionally
+	// be an identifier or string alias.
 	if p.peek() == AS {
 		col.As, _, _ = p.scan()
-		if !isAliasToken(p.peek()) {
+		if !isExplicitAliasToken(p.peek()) {
 			return &col, p.errorExpected(p.pos, p.tok, "column alias")
 		}
 		col.Alias, _ = p.parseAlias("column alias")
